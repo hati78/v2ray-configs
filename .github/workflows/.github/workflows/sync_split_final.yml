@@ -1,0 +1,113 @@
+name: Full Sync + NekoBox & Gemini Safe VLESS Split
+
+on:
+  workflow_dispatch:        # اجرای دستی
+  schedule:
+    - cron: "0 2 * * *"     # اجرای روزانه ساعت 02:00 UTC
+
+jobs:
+  sync_split:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      # فولدر اصلی NekoBox
+      - name: Create Protocols folder if missing
+        run: mkdir -p Protocols
+
+      # فولدر جدا برای Gemini
+      - name: Create Gemini folder if missing
+        run: mkdir -p Protocols_gemini
+
+      # دانلود فایل اصلی
+      - name: Fetch original repo vless.txt
+        run: |
+          curl -sL https://raw.githubusercontent.com/SoliSpirit/v2ray-configs/main/Protocols/vless.txt -o Protocols/vless.txt
+
+      # بررسی دانلود
+      - name: Check vless.txt download
+        run: |
+          if [ ! -s Protocols/vless.txt ]; then
+            echo "ERROR: vless.txt is empty or missing!"
+            exit 1
+          fi
+
+      # آماده‌سازی فایل‌ها
+      - name: Prepare output files
+        run: |
+          > Protocols/vless_game.txt
+          > Protocols/vless_stream.txt
+          > Protocols/vless_download.txt
+          > Protocols_gemini/vless_gemini.txt
+
+      # تقسیم کشور محور + NekoBox + Gemini-safe
+      - name: Country-based split & Gemini-safe
+        run: |
+          COUNT_GAME=0
+          COUNT_STREAM=0
+          COUNT_DOWNLOAD=0
+          COUNT_GEMINI=0
+          MAX_LINES=1000
+
+          while read -r line; do
+            line=$(echo "$line" | sed 's/^[ \t]*//;s/[ \t]*$//')
+            [ -z "$line" ] && continue
+
+            # GAME
+            if echo "$line" | grep -Eqi "(germany|de|frankfurt|netherlands|nl|finland|fi|turkey|tr|france|fr)"; then
+              if [ $COUNT_GAME -lt $MAX_LINES ]; then
+                echo "$line" >> Protocols/vless_game.txt
+                COUNT_GAME=$((COUNT_GAME+1))
+              fi
+
+            # STREAM
+            elif echo "$line" | grep -Eqi "(uk|london|england|gb|germany|de|netherlands|nl|france|fr)"; then
+              if [ $COUNT_STREAM -lt $MAX_LINES ]; then
+                echo "$line" >> Protocols/vless_stream.txt
+                COUNT_STREAM=$((COUNT_STREAM+1))
+              fi
+
+            # DOWNLOAD
+            else
+              if [ $COUNT_DOWNLOAD -lt $MAX_LINES ]; then
+                echo "$line" >> Protocols/vless_download.txt
+                COUNT_DOWNLOAD=$((COUNT_DOWNLOAD+1))
+              fi
+            fi
+
+            # GEMINI-safe
+            if [ $COUNT_GEMINI -lt $MAX_LINES ]; then
+              host=$(echo "$line" | cut -d@ -f2 | cut -d/ -f1)
+              # تست اتصال امن با curl
+              curl -s --connect-timeout 5 "https://$host" >/dev/null 2>&1
+              if [ $? -eq 0 ]; then
+                echo "$line" >> Protocols_gemini/vless_gemini.txt
+                COUNT_GEMINI=$((COUNT_GEMINI+1))
+              fi
+            fi
+
+          done < Protocols/vless.txt
+
+      # پاکسازی و UTF-8
+      - name: Clean empty lines & whitespaces + enforce UTF-8
+        run: |
+          for f in Protocols/vless_*.txt; do
+            sed -i 's/^[ \t]*//;s/[ \t]*$//' "$f"
+            sed -i '/^$/d' "$f"
+            iconv -f UTF-8 -t UTF-8 "$f" -o "$f".tmp && mv "$f".tmp "$f"
+          done
+          for f in Protocols_gemini/vless_*.txt; do
+            sed -i 's/^[ \t]*//;s/[ \t]*$//' "$f"
+            sed -i '/^$/d' "$f"
+            iconv -f UTF-8 -t UTF-8 "$f" -o "$f".tmp && mv "$f".tmp "$f"
+          done
+
+      # Commit & Push
+      - name: Commit & Push
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add Protocols/vless_*.txt Protocols_gemini/vless_*.txt
+          git commit -m "Full sync + NekoBox & Gemini-safe split" || exit 0
+          git push
