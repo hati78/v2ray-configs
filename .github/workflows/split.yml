@@ -1,9 +1,9 @@
-name: Final VLESS Split NekoBox Safe
+name: NekoBox Safe VLESS Split
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:        # اجرای دستی
   schedule:
-    - cron: "0 2 * * *"
+    - cron: "0 2 * * *"     # اجرای روزانه ساعت 02:00 UTC
 
 jobs:
   split:
@@ -18,43 +18,54 @@ jobs:
           > Protocols/vless_stream.txt
           > Protocols/vless_download.txt
 
-      - name: Country-based split safe
+      - name: Country-based split & NekoBox safe
         run: |
           COUNT_GAME=0
           COUNT_STREAM=0
           COUNT_DOWNLOAD=0
+          MAX_LINES=1000
 
           while read -r line; do
-            line=$(echo "$line" | sed 's/^[ \t]*//;s/[ \t]*$//') # trim
-            [ -z "$line" ] && continue                             # skip empty
+            # trim spaces
+            line=$(echo "$line" | sed 's/^[ \t]*//;s/[ \t]*$//')
+            [ -z "$line" ] && continue   # skip empty
 
-            # --- GAME ---
+            # --- GAME (latency sensitive) ---
             if echo "$line" | grep -Eqi "(germany|de|frankfurt|netherlands|nl|finland|fi|turkey|tr|france|fr)"; then
-              if [ $COUNT_GAME -lt 1200 ]; then
+              if [ $COUNT_GAME -lt $MAX_LINES ]; then
                 echo "$line" >> Protocols/vless_game.txt
                 COUNT_GAME=$((COUNT_GAME+1))
               fi
 
-            # --- STREAM ---
+            # --- STREAM (stable europe + UK) ---
             elif echo "$line" | grep -Eqi "(uk|london|england|gb|germany|de|netherlands|nl|france|fr)"; then
-              if [ $COUNT_STREAM -lt 1200 ]; then
+              if [ $COUNT_STREAM -lt $MAX_LINES ]; then
                 echo "$line" >> Protocols/vless_stream.txt
                 COUNT_STREAM=$((COUNT_STREAM+1))
               fi
 
-            # --- DOWNLOAD (all others) ---
+            # --- DOWNLOAD (all others, free & speed) ---
             else
-              if [ $COUNT_DOWNLOAD -lt 1200 ]; then
+              if [ $COUNT_DOWNLOAD -lt $MAX_LINES ]; then
                 echo "$line" >> Protocols/vless_download.txt
                 COUNT_DOWNLOAD=$((COUNT_DOWNLOAD+1))
               fi
             fi
+
           done < Protocols/vless.txt
+
+      - name: Clean empty lines & whitespaces
+        run: |
+          for f in Protocols/vless_*.txt; do
+            sed -i 's/^[ \t]*//;s/[ \t]*$//' "$f"   # trim
+            sed -i '/^$/d' "$f"                     # remove empty lines
+            iconv -f UTF-8 -t UTF-8 "$f" -o "$f".tmp && mv "$f".tmp "$f"  # force UTF-8
+          done
 
       - name: Commit & Push
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           git add Protocols/vless_*.txt
-          git commit -m "Safe split for NekoBox" || exit 0
+          git commit -m "NekoBox safe split (max 1000, country-based)" || exit 0
           git push
