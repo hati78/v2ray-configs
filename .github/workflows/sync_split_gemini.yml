@@ -1,0 +1,89 @@
+name: Full Sync + NekoBox & Gemini Safe VLESS Split
+
+on:
+  workflow_dispatch:        # اجرای دستی
+  schedule:
+    - cron: "0 2 * * *"     # اجرای روزانه ساعت 02:00 UTC
+
+jobs:
+  sync_split:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Fetch original repo vless.txt
+        run: |
+          # دانلود آخرین نسخه vless.txt از ریپو اصلی
+          curl -sL https://raw.githubusercontent.com/SoliSpirit/v2ray-configs/main/Protocols/vless.txt -o Protocols/vless.txt
+
+      - name: Prepare output files
+        run: |
+          > Protocols/vless_game.txt
+          > Protocols/vless_stream.txt
+          > Protocols/vless_download.txt
+          > Protocols/vless_gemini.txt
+
+      - name: Country-based split & NekoBox safe
+        run: |
+          COUNT_GAME=0
+          COUNT_STREAM=0
+          COUNT_DOWNLOAD=0
+          COUNT_GEMINI=0
+          MAX_LINES=1000
+
+          while read -r line; do
+            # trim spaces
+            line=$(echo "$line" | sed 's/^[ \t]*//;s/[ \t]*$//')
+            [ -z "$line" ] && continue   # skip empty
+
+            # --- GAME ---
+            if echo "$line" | grep -Eqi "(germany|de|frankfurt|netherlands|nl|finland|fi|turkey|tr|france|fr)"; then
+              if [ $COUNT_GAME -lt $MAX_LINES ]; then
+                echo "$line" >> Protocols/vless_game.txt
+                COUNT_GAME=$((COUNT_GAME+1))
+              fi
+
+            # --- STREAM ---
+            elif echo "$line" | grep -Eqi "(uk|london|england|gb|germany|de|netherlands|nl|france|fr)"; then
+              if [ $COUNT_STREAM -lt $MAX_LINES ]; then
+                echo "$line" >> Protocols/vless_stream.txt
+                COUNT_STREAM=$((COUNT_STREAM+1))
+              fi
+
+            # --- DOWNLOAD ---
+            else
+              if [ $COUNT_DOWNLOAD -lt $MAX_LINES ]; then
+                echo "$line" >> Protocols/vless_download.txt
+                COUNT_DOWNLOAD=$((COUNT_DOWNLOAD+1))
+              fi
+            fi
+
+            # --- GEMINI test (فقط نودهای سالم برای Google Studio) ---
+            if [ $COUNT_GEMINI -lt $MAX_LINES ]; then
+              # تست اتصال ساده به host نود
+              host=$(echo "$line" | cut -d@ -f2 | cut -d/ -f1)
+              timeout 5 bash -c "echo > /dev/tcp/$host/443" 2>/dev/null
+              if [ $? -eq 0 ]; then
+                echo "$line" >> Protocols/vless_gemini.txt
+                COUNT_GEMINI=$((COUNT_GEMINI+1))
+              fi
+            fi
+
+          done < Protocols/vless.txt
+
+      - name: Clean empty lines & whitespaces + enforce UTF-8
+        run: |
+          for f in Protocols/vless_*.txt; do
+            sed -i 's/^[ \t]*//;s/[ \t]*$//' "$f"
+            sed -i '/^$/d' "$f"
+            iconv -f UTF-8 -t UTF-8 "$f" -o "$f".tmp && mv "$f".tmp "$f"
+          done
+
+      - name: Commit & Push
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add Protocols/vless_*.txt
+          git commit -m "Full sync + NekoBox & Gemini-safe split" || exit 0
+          git push
