@@ -1,0 +1,50 @@
+name: Final VLESS Split (Game / Stream / Download)
+
+on:
+  workflow_dispatch:        # اجرای دستی
+  schedule:
+    - cron: "0 2 * * *"     # اجرای خودکار هر روز (02:00 UTC)
+
+jobs:
+  split:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Prepare output files
+        run: |
+          > Protocols/vless_game.txt
+          > Protocols/vless_stream.txt
+          > Protocols/vless_download.txt
+
+      - name: Smart country-based split
+        run: |
+          while read -r line; do
+
+            # --- GAME: latency sensitive (near countries) ---
+            if echo "$line" | grep -Eqi "(germany|de|frankfurt|netherlands|nl|finland|fi|turkey|tr|france|fr)"; then
+              echo "$line" >> Protocols/vless_game.txt
+
+            # --- STREAM: stable europe + UK ---
+            elif echo "$line" | grep -Eqi "(germany|de|netherlands|nl|france|fr|uk|london|england|gb)"; then
+              echo "$line" >> Protocols/vless_stream.txt
+
+            # --- DOWNLOAD: free & speed based (everything else) ---
+            else
+              echo "$line" >> Protocols/vless_download.txt
+            fi
+
+          done < Protocols/vless.txt
+
+      - name: Clean empty lines (NekoBox friendly)
+        run: |
+          sed -i '/^$/d' Protocols/vless_*.txt
+
+      - name: Commit & Push changes
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add Protocols/vless_*.txt
+          git commit -m "Final smart split for NekoBox (game/stream/download)" || exit 0
+          git push
